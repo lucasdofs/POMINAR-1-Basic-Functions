@@ -1,0 +1,283 @@
+############### Authors: Daniel Orozco, Lucas Sales, André Pinho and Luz Fernandéz ############
+#e-mail: lucasofsales@gmail.com  or ldo-sales@hotmail.com
+
+#This code was developed by Daniel Orozco, Lucas Sales, André Pinho and Luz Fernandéz in order to help the users to use the POMINAR(1) process
+
+################# Functions ###############################
+##########################################################
+
+#This function generates m observations from a POMINAR(1) process
+#Theta is the vector of parameters(alpha,beta,lambda,p) of the process POMINAR(1) 
+# m is the sample size.
+rpominar=function(theta,m){
+  alpha=theta[1] 
+  beta=theta[2] 
+  lambda=theta[3]
+  p=theta[4]
+  c1=p*alpha+beta*(1-p)
+  y=epsilon=NULL
+  y[1]= round(lambda/(1-c1),0) 
+  for(i in 2:(m+300)){
+    epsilon[i]= rpois(1,lambda) 
+    u=runif(1) 
+    if(u<p) {
+      y[i]=rbinom(1,y[i-1],alpha) + epsilon[i] #INAR(1)
+    }  else{
+      y[i]=rpois(1,y[i-1]*beta) + epsilon[i] #INARCH(1)
+    }
+  }
+  return(y[301:(300+m)])
+}
+
+
+#The conditional maximum log likelihood of POMINAR(1) process.
+#This function provides the EML estimate for the parameters,
+#the hessian matrix and the value of maximum log likelihood
+#x is the data, initial.value is a vector with the initial values for the 
+#parameters (alpha,beta,lambda,p)
+
+MLE_POMINAR <- function(x,initial.value){
+  N<-length(x)
+  LL<-function(y){
+    alpha<- y[1]
+    beta<- y[2]
+    lambda<-y[3]
+    p<-y[4]
+    p1 = rep(NA, times = N)
+    p1[1] = 0
+    for(t in 2:N){
+      soma <- 0
+      soma1<-0
+      for(k in 0:(min(x[t-1],x[t]))){
+        soma = soma + choose(x[t-1],k)*alpha^k*(1-alpha)^(x[t-1]-k)*(exp(-lambda)*((lambda^(x[t] - k))))/(factorial(x[t] - k))
+      } 
+      soma1=soma1+p*soma+(1-p)*(exp(-(beta*x[t-1]+lambda))*
+                                  (beta*x[t-1]+lambda)^{x[t]})/(factorial(x[t]))
+      p1[t] = log(soma1)   
+    }
+    -sum(p1)   
+  }
+  lw=c(0.01,0.01,0.01,0)#lw=-valorInf del parametro
+  up = c(0.99, 0.99,Inf,1)###up=valorSup del parametro
+  optim(initial.value,LL,lower=lw, upper=up,method="L-BFGS-B", hessian=TRUE)$par  
+}
+
+#Yule-Walker estimations -
+YW=function(dados,chute){
+  x=acf(dados)
+  aux=function(theta){  
+    alpha<- theta[1]
+    beta<- theta[2]
+    lambda<-theta[3]
+    p<-theta[4]
+    c1=p*alpha+beta*(1-p)
+    c2=p*alpha^2+(1-p)*beta^2
+    c3=p*alpha*(1-alpha)+(1-p)*beta
+    c4=c3+2*lambda*c1
+    k=1:4
+    aux1 <- p^2*alpha^(k)*lambda/(1-alpha) + (1-p)^2*beta^(k)*lambda/((1-beta)*(1-beta^2))
+    aux2 <- lambda^2*((1-c1)^2-(1-c2))+lambda*(1-c1)*(c4+(1-c1))
+    aux3 <- (1-c2)*(1-c1)^2
+    
+    f= aux1/(aux2/aux3) - x$acf[2:5]
+    return(f)
+  }
+  BBsolve(par=chute,fn=aux,quiet=T)$par
+  #nleqslv(x=chute,fn=aux)
+}
+
+prob_trans=function(yt,theta,yt1){
+  alpha=theta[1];beta=theta[2];lambda=theta[3];p=theta[4]
+  k=0:min(yt1,yt)
+  aux1=lambda^(yt-k)*exp(-lambda)*choose(yt1,k)*alpha^k*(1-alpha)^(yt1-k)/(factorial(yt-k))
+  p*sum(aux1)+(1-p)*exp(-(beta*yt1+lambda))*(beta*yt1+lambda)^yt/(factorial(yt))
+  
+}
+
+### Some forecasting methods for the POMINAR(1) process 
+forecasting_median=function(yt1,theta){
+  #alpha=theta[1];beta=theta[2];lambda=theta[3];p=theta[4]
+  yt1=yt1
+  medi=0
+  s=prob_trans(0,theta,yt1)
+  while(s<0.5){
+    medi=medi+1
+    s=s+prob_trans(medi,theta,yt1)
+  }
+  medi
+}
+
+forecasting_mode=function(yt1,theta){
+  #alpha=theta[1];beta=theta[2];lambda=theta[3];p=theta[4]
+  moda=0
+  cont=0
+  resto=1-prob_trans(0,theta,yt1)
+  while(resto>=prob_trans(moda,theta,yt1)){
+    cont=cont+1
+    resto=resto-prob_trans(cont,theta,yt1)
+    if(prob_trans(cont,theta,yt1)>=prob_trans(moda,theta,yt1))
+    {
+      moda=cont
+    }
+  }
+  moda
+}
+
+
+forecasting_CE=function(yt1,theta){
+  alpha=theta[1];beta=theta[2];lambda=theta[3];p=theta[4]
+  c1=p*alpha+beta*(1-p)
+  round(c1*yt1+lambda)
+}
+
+
+
+
+
+# Forecasting in Aplication
+dados=read.table("dados.csv",sep=",",header=T)
+dados=dados$X44station
+
+MLE_POMINAR(dados,c(0.5,0.5,17,0.6)) 
+
+#Residuals
+a=0.383;b=0;lambda=14.275;p=0.721
+c1= a*p
+
+#Code for verify the residuals for  this specific example (parameters) 
+resPOMINAR=function(x){
+  a=0.383;b=0;lambda=14.275;p=0.721
+  c1= a*p
+  aux=c1*x + lambda
+  EV1= aux[-c(length(aux))]
+  res=x[-1] - EV1
+  return(res)
+}
+
+aux=resPOMINAR(dados)
+
+#Quantities for compare the mean and the variance of the residuals/ process
+c1=p*a+b*(1-p)
+c2=p*a^2+b^2*(1-p)
+c3=p*a*(1-a)+b*(1-p)
+c4=c3+2*lambda*c1
+sig2hat=(lambda^2*((1-c1)^2 -(1-c2)) + lambda*(1-c1)*(c4+1-c1))/ (( 1-c2)*(1-c1)^2)
+sig2hat #variance of the process
+var(aux) #The variance of residuals 
+mean(aux) #the mean of residuals
+
+acf2(teste,max.lag = 10,main="Series: Empirical residuals")
+plot(teste/sd(teste))
+
+#In this real example, the mean of the residuals is equals to 0.160,
+#the estimated variance of the process (using the estimated parameters) 
+#is 32.554 and the estimated variance for the residuals is 35.609.  Note that the empirical residual are uncorrelated.
+#Based on this analysis we conclude that the POMINAR(1) it is a reasonable model for the data.
+
+theta.hat_CML=matrix(0,ncol=4,nrow=20)
+CE_CML=MOD_CML=MED_CML=NULL
+for(i in 1:20){
+theta.hat_CML[i,]=MLE_POMINAR(dados[1:(123+i)],c(0.383,0.0,14.275,0.721))
+CE_CML[i]=forecasting_CE(dados[(123+i)],theta.hat_CML[i,])
+MED_CML[i]=forecasting_median(dados[(123+i)],theta.hat_CML[i,])
+MOD_CML[i]=forecasting_mode(dados[(123+i)],theta.hat_CML[i,])
+}
+
+
+theta.hat_YW=matrix(0,ncol=4,nrow=20)
+CE_YW=MOD_YW=MED_YW=NULL
+i=1
+repeat{
+  print(i)
+  theta.hat_YW[i,]=YW(dados[1:(123+i)],c(0.383,0.0,14.275,0.721))
+  theta.hat_YW[1,2]=0.1091208
+  if(theta.hat_YW[i,1]<0 | theta.hat_YW[i,1]>1){
+  theta.hat_YW[i,1]=theta.hat_YW[i-1,1]
+}
+  if(theta.hat_YW[i,2]<0){
+    theta.hat_YW[i,2]=theta.hat_YW[i-1,2]
+  }
+  if(theta.hat_YW[i,4]<0){
+    theta.hat_YW[i,4]=theta.hat_YW[i-1,4]
+  }
+  if(theta.hat_YW[i,4]>1){
+    theta.hat_YW[i,4]=theta.hat_YW[i-1,4]
+  }
+  
+  CE_YW[i]=forecasting_CE(dados[(123+i)],theta.hat_YW[i,])
+  MED_YW[i]=forecasting_median(dados[(123+i)],theta.hat_YW[i,])
+  MOD_YW[i]=forecasting_mode(dados[(123+i)],theta.hat_YW[i,])
+  i=i+1
+
+  if(i==21){
+    break
+  }
+  }
+mean(abs(dados[125:144]-CE_YW))
+mean(abs(dados[125:144]-MED_YW))
+mean(abs(dados[125:144]-MOD_YW))
+mean(abs(dados[125:144]-CE_CML))
+mean(abs(dados[125:144]-MED_CML))
+mean(abs(dados[125:144]-MOD_CML))
+
+sqrt(mean((dados[125:144]-CE_YW)^2))
+sqrt(mean((dados[125:144]-MED_YW)^2))
+sqrt(mean((dados[125:144]-MOD_YW)^2))
+sqrt(mean((dados[125:144]-CE_CML)^2))
+sqrt(mean((dados[125:144]-MED_CML)^2))
+sqrt(mean((dados[125:144]-MOD_CML)^2))
+
+
+
+tabela=cbind("T"=125:144,round(theta.hat_CML,4),round(theta.hat_YW,4),"Real Value"=dados[125:144],CE_CML,MED_CML,MOD_CML,CE_YW,MED_YW,MOD_YW)
+install.packages("xtable")
+library(xtable)
+xtable(tabela)
+
+
+########## An ilustrative example ####################
+
+#Forecasting Interval for the application
+#CML Estimator
+i=1;j=0;soma=rep(0,20);ic_CML=NULL
+repeat{
+  soma[i]=soma[i]+prob_trans(j,theta.hat_CML[i,],dados[124+i])
+  if(soma[i] >= 0.95){
+    ic_CML[i]=j;j=0;i=i+1
+  }
+  else{
+    j=j+1
+  }
+  
+  if(i==21){break}
+}
+soma
+ic_CML
+
+i=1;j=0;soma=rep(0,20);ic_YW=NULL
+repeat{
+  soma[i]=soma[i]+prob_trans(j,theta.hat_YW[i,],dados[124+i])
+  if(soma[i] >= 0.95){
+    ic_YW[i]=j;j=0;i=i+1
+  }
+  else{
+    j=j+1
+  }
+  
+  if(i==21){break}
+}
+soma
+ic_YW
+
+#Prediction interval
+plot(dados[125:144],type="l",col="black",ylim=c(6,45),xaxt="n",
+     ylab="Number of larcenies",xlab="Time")
+
+lines(1:20,ic_CML,col="red",lty=2)
+lines(1:20,ic_YW,col="blue",lty=3)
+legend("topleft",legend=c("Real values","CML method","YW method"),lty=c(1,2,3),
+       col=c("black","red", "blue" ))
+
+
+
+
